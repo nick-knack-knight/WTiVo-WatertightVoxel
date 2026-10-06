@@ -2,8 +2,8 @@
 cmake_minimum_required(VERSION 3.24)
 project(WTiVoNative VERSION 1.0.0 LANGUAGES CXX)
 
-if(NOT WIN32)
-  message(FATAL_ERROR "WTiVo v1.0 native build currently supports Windows x64 only")
+if(NOT WIN32 AND NOT (CMAKE_SYSTEM_NAME STREQUAL "Linux"))
+  message(FATAL_ERROR "WTiVo native build supports Windows x64 and Linux x86_64 (Ubuntu 22.04)")
 endif()
 if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
   message(FATAL_ERROR "WTiVo requires a 64-bit compiler/toolchain")
@@ -41,12 +41,16 @@ target_link_libraries(wtivo_core PRIVATE CGAL::CGAL TBB::tbb Eigen3::Eigen)
 if(TARGET TBB::tbbmalloc)
   target_link_libraries(wtivo_core PRIVATE TBB::tbbmalloc)
 endif()
-target_compile_definitions(wtivo_core PRIVATE
-  NOMINMAX WIN32_LEAN_AND_MEAN CGAL_LINKED_WITH_TBB EIGEN_MPL2_ONLY)
+target_compile_definitions(wtivo_core PRIVATE CGAL_LINKED_WITH_TBB EIGEN_MPL2_ONLY)
+if(WIN32)
+  target_compile_definitions(wtivo_core PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+endif()
 
 pybind11_add_module(wtivo_vdb MODULE native/vdb/wtivo_vdb.cpp)
 target_link_libraries(wtivo_vdb PRIVATE OpenVDB::openvdb TBB::tbb)
-target_compile_definitions(wtivo_vdb PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+if(WIN32)
+  target_compile_definitions(wtivo_vdb PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+endif()
 
 if(MSVC)
   # Keep floating-point behavior conservative. No /fp:fast.

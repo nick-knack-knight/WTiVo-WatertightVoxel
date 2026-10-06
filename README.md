@@ -99,6 +99,15 @@ This is a benchmark, **not a promise that every asset or GPU will take 1.49 minu
 
 RTX 20/30/40/50-family GPUs are intended targets, but **the only benchmarked machine so far is the RTX 5050 Laptop system above**. AMD-only, Intel-only, CPU-only, Linux, and macOS systems are not supported by the v1.0 fast CUDA path.
 
+## Ubuntu 22.04 (Python 3.12, PyTorch 2.8.0 + CUDA 12.8, RTX A6000)
+
+```bash
+scripts/setup_ubuntu.sh
+./run-wtivo.sh --input model.glb --output model_watertight.glb
+```
+
+See [`docs/UBUNTU.md`](docs/UBUNTU.md). The Windows instructions below remain supported.
+
 ## Quick start
 
 Clone/download the repository to a short normal Windows path, for example:

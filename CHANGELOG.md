@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Ubuntu 22.04 / Python 3.12 / PyTorch 2.8.0+cu128 / RTX A6000 (sm_86) build: `scripts/setup_ubuntu.sh`, `run-wtivo.sh`, cross-platform CMake and `build_gpupr.py`, Linux memory/heap handling in `wtivo.py`.
+
 ## 1.0.0 — 2026-08-25
 
 First public source release of **WTiVo: WatertightVoxel Optimizer**.

@@ -7,8 +7,7 @@ import shutil
 import sys
 from pathlib import Path
 
-if os.name != "nt":
-    raise SystemExit("WTiVo GPUPr build currently supports Windows only.")
+IS_WIN = os.name == "nt"
 
 ROOT = Path(__file__).resolve().parents[1]
 BUILD_DIR = ROOT / ".build" / "gpupr"
@@ -37,10 +36,16 @@ os.environ["TORCH_CUDA_ARCH_LIST"] = arch
 
 cuda_home = os.environ.get("WTIVO_CUDA_HOME") or os.environ.get("CUDA_HOME") or os.environ.get("CUDA_PATH")
 if not cuda_home:
-    default = Path(r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8")
+    if IS_WIN:
+        default = Path(r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8")
+    else:
+        default = Path("/usr/local/cuda-12.8")
+        if not default.exists():
+            default = Path("/usr/local/cuda")
     if default.exists():
         cuda_home = str(default)
-if not cuda_home or not (Path(cuda_home) / "bin" / "nvcc.exe").exists():
+nvcc_name = "nvcc.exe" if IS_WIN else "nvcc"
+if not cuda_home or not (Path(cuda_home) / "bin" / nvcc_name).exists():
     raise RuntimeError("CUDA Toolkit with nvcc was not found. Install CUDA Toolkit 12.8 or set WTIVO_CUDA_HOME.")
 os.environ["CUDA_HOME"] = cuda_home
 os.environ["CUDA_PATH"] = cuda_home
@@ -48,6 +53,9 @@ os.environ["CUDA_PATH"] = cuda_home
 extra_cuda = ["-O3", "--std=c++17"]
 if os.environ.get("WTIVO_ALLOW_UNSUPPORTED_MSVC", "0") == "1":
     extra_cuda.append("-allow-unsupported-compiler")
+if not IS_WIN:
+    # Make sure nvcc is on PATH for torch's cpp_extension and uses the same toolkit.
+    os.environ["PATH"] = str(Path(cuda_home) / "bin") + os.pathsep + os.environ.get("PATH", "")
 
 print("[WTiVo GPU build]")
 print(" Python :", sys.executable)
@@ -65,14 +73,14 @@ mod = load(
         str(ROOT / "native" / "gpupr" / "gpu_push_relabel_fast.cu"),
     ],
     build_directory=str(BUILD_DIR),
-    extra_cflags=["/O2", "/std:c++17", "/fp:precise"],
+    extra_cflags=(["/O2", "/std:c++17", "/fp:precise"] if IS_WIN else ["-O3", "-std=c++17"]),
     extra_cuda_cflags=extra_cuda,
     with_cuda=True,
     verbose=True,
 )
 
 built = Path(mod.__file__).resolve()
-dst = OUT_DIR / "wtivo_gpupr.pyd"
+dst = OUT_DIR / ("wtivo_gpupr.pyd" if IS_WIN else built.name)
 shutil.copy2(built, dst)
 print("[SUCCESS] built:", dst)
 

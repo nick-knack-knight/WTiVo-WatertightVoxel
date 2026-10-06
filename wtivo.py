@@ -177,7 +177,13 @@ def _gib(x):
 
 
 def compact_host_heap():
-    """Best-effort Windows CRT heap compaction; never required for correctness."""
+    """Best-effort host heap compaction; never required for correctness."""
+    if sys.platform.startswith("linux"):
+        try:
+            ctypes.CDLL("libc.so.6").malloc_trim(0)
+        except Exception:
+            pass
+        return
     if os.name != "nt":
         return
     for dll in ("ucrtbase", "msvcrt"):
@@ -261,6 +267,22 @@ def mem_snapshot(tag: str):
             if psapi.GetProcessMemoryInfo(h, ctypes.byref(pm), pm.cb):
                 proc_ws = pm.WorkingSetSize
                 proc_private = pm.PrivateUsage
+        elif sys.platform.startswith("linux"):
+            mi = {}
+            with open("/proc/meminfo") as f:
+                for line in f:
+                    k, _, v = line.partition(":")
+                    mi[k] = int(v.split()[0]) * 1024
+            sys_free = mi.get("MemAvailable", 0)
+            sys_used = mi.get("MemTotal", 0) - sys_free
+            commit_free = mi.get("SwapFree", 0)
+            commit_used = mi.get("SwapTotal", 0) - commit_free
+            with open("/proc/self/status") as f:
+                for line in f:
+                    if line.startswith("VmRSS:"):
+                        proc_ws = int(line.split()[1]) * 1024
+                    elif line.startswith("VmData:"):
+                        proc_private = int(line.split()[1]) * 1024
     except Exception as e:
         print(f"[WTiVo-MEM] profiler warning: {e}", flush=True)
 
@@ -692,10 +714,10 @@ def main():
         raise ValueError("--lambda_fill must be >=0")
     if a.threads < 1:
         raise ValueError("--threads must be >=1")
-    if os.name != "nt":
-        raise SystemExit("WTiVo 1.0 currently supports Windows 10/11 x64 only.")
+    if os.name != "nt" and not sys.platform.startswith("linux"):
+        raise SystemExit("WTiVo supports Windows 10/11 x64 and Linux x86_64 (Ubuntu 22.04) only.")
     if not torch.cuda.is_available():
-        raise SystemExit("WTiVo requires an NVIDIA CUDA-capable GPU. Run Setup-Windows.cmd first.")
+        raise SystemExit("WTiVo requires an NVIDIA CUDA-capable GPU. Run Setup-Windows.cmd (Windows) or scripts/setup_ubuntu.sh (Linux) first.")
 
     inp = Path(a.input).expanduser().resolve()
     out = Path(a.output).expanduser().resolve()

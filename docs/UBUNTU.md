@@ -1,0 +1,48 @@
+# Ubuntu 22.04 build (Python 3.12, PyTorch 2.8.0, CUDA 12.8, RTX A6000)
+
+## Target baseline
+
+| Item | Value |
+|---|---|
+| OS | Ubuntu 22.04 LTS x86_64 |
+| Python | 3.12 (deadsnakes PPA if not installed) |
+| PyTorch | 2.8.0+cu128 (official PyTorch cu128 wheel index) |
+| CUDA Toolkit | 12.8 with `nvcc` (`/usr/local/cuda-12.8`) |
+| GPU | NVIDIA RTX A6000 (Ampere, compute capability 8.6, 48 GB) |
+| Compiler | system GCC 11 (supported by CUDA 12.8) |
+
+The NVIDIA driver (>= 570 for CUDA 12.8) and the CUDA Toolkit 12.8 are prerequisites
+and are never installed by WTiVo. Check with `nvidia-smi` and `/usr/local/cuda-12.8/bin/nvcc --version`.
+
+## Setup
+
+```bash
+git clone https://github.com/nick-knack-knight/WTiVo-WatertightVoxel.git
+cd WTiVo-WatertightVoxel
+scripts/setup_ubuntu.sh
+```
+
+The script (re-runnable):
+
+1. installs apt packages (Python 3.12, build tools, Eigen, oneTBB, Boost, GMP/MPFR);
+2. creates `.venv`, installs `torch==2.8.0` (cu128) and the pinned requirements;
+3. downloads header-only CGAL 6.0.1 and builds OpenVDB 11.0.0 into `.deps/`;
+4. builds `wtivo_core` and `wtivo_vdb` with CMake/Ninja into `build/`;
+5. builds the CUDA extension `wtivo_gpupr` for `sm_86` (detected from the GPU, defaulting to 8.6 when no GPU is visible, e.g. in a build container);
+6. writes `.wtivo-env.sh` (`LD_LIBRARY_PATH`, CUDA home) and runs `scripts/verify_install.py`.
+
+Options: `--skip-apt`, `--cuda-arch 8.6` (or `WTIVO_CUDA_ARCH`), `WTIVO_CUDA_HOME`, `WTIVO_JOBS`.
+
+## Run
+
+```bash
+./run-wtivo.sh --input model.glb --output model_watertight.glb --input-res 1536 --final-res 1536 --lambda_fill 10
+```
+
+## Notes
+
+* Windows-specific code paths (DLL directories, CRT heap compaction, Win32 memory
+  counters) are guarded; Linux uses `malloc_trim` and `/proc` for the memory
+  snapshots.
+* The 1536/12M benchmark was measured on Windows/RTX 5050; the Ubuntu/A6000 build
+  has not been benchmarked by the original author.

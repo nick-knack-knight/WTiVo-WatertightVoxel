@@ -1,0 +1,6 @@
+.venv/
+.deps/
+.build/
+build/
+.wtivo-env.sh
+__pycache__/

@@ -7,7 +7,7 @@ def ok(cond,msg):
     if not cond: errors.append(msg)
 def text(rel): return (ROOT/rel).read_text(encoding='utf-8-sig' if rel.endswith('.ps1') else 'utf-8')
 
-required=['README.md','LICENSE','LICENSING.md','NOTICE','THIRD_PARTY_NOTICES.md','wtivo.py','CMakeLists.txt','vcpkg.json','Setup-Windows.cmd','Run-WTiVo.cmd','native/core/wtivo_core.cpp','native/vdb/wtivo_vdb.cpp','native/gpupr/wtivo_gpupr_bindings.cpp','native/gpupr/gpu_push_relabel_fast.cu','native/gpupr/gpu_push_relabel_fast.h','scripts/setup_windows.ps1','scripts/build_gpupr.py','scripts/verify_install.py']
+required=['README.md','LICENSE','LICENSING.md','NOTICE','THIRD_PARTY_NOTICES.md','wtivo.py','CMakeLists.txt','vcpkg.json','Setup-Windows.cmd','Run-WTiVo.cmd','native/core/wtivo_core.cpp','native/vdb/wtivo_vdb.cpp','native/gpupr/wtivo_gpupr_bindings.cpp','native/gpupr/gpu_push_relabel_fast.cu','native/gpupr/gpu_push_relabel_fast.h','scripts/setup_windows.ps1','scripts/build_gpupr.py','scripts/verify_install.py','scripts/setup_ubuntu.sh','run-wtivo.sh']
 for r in required: ok((ROOT/r).is_file(),f'missing required file: {r}')
 
 for r in ['wtivo.py','scripts/build_gpupr.py','scripts/verify_install.py','scripts/source_audit.py','scripts/package_release.py']:
