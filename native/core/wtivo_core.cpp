@@ -86,7 +86,7 @@ static py::tuple tetrahedralize_neighbors(
     const int n = static_cast<int>(vertices.rows());
     if (n <= 0) {
         MatrixXi z(0, 4);
-        return py::make_tuple(vertices, z, z);
+        return py::make_tuple(MatrixXd(vertices), z, z);
     }
 
     const int threads = wtivo_threads(requested_threads);
@@ -161,7 +161,12 @@ static py::tuple tetrahedralize_neighbors(
 
     // Returning vertices keeps the same public shape as the proven runtime and
     // lets Python reuse the exact vertex array for label sampling and graph math.
-    return py::make_tuple(vertices, std::move(tets), std::move(nbrs));
+    //
+    // `vertices` is an Eigen::Ref that may alias a temporary column-major copy
+    // pybind makes of a C-ordered numpy array; casting it directly would hand
+    // Python a non-owning view of memory freed when this call returns (segfault
+    // on Linux). Return an owning copy instead.
+    return py::make_tuple(MatrixXd(vertices), std::move(tets), std::move(nbrs));
 }
 
 // -----------------------------------------------------------------------------
