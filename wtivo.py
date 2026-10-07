@@ -715,7 +715,7 @@ def main():
     if a.threads < 1:
         raise ValueError("--threads must be >=1")
     if os.name != "nt" and not sys.platform.startswith("linux"):
-        raise SystemExit("WTiVo supports Windows 10/11 x64 and Linux x86_64 (Ubuntu 22.04) only.")
+        raise SystemExit("WTiVo supports Windows 10/11 x64 and Linux x86_64 (Ubuntu 24.04) only.")
     if not torch.cuda.is_available():
         raise SystemExit("WTiVo requires an NVIDIA CUDA-capable GPU. Run Setup-Windows.cmd (Windows) or scripts/setup_ubuntu.sh (Linux) first.")
 

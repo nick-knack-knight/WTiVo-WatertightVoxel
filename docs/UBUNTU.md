@@ -1,15 +1,15 @@
-# Ubuntu 22.04 build (Python 3.12, PyTorch 2.8.0, CUDA 12.8, RTX A6000)
+# Ubuntu 24.04 build (Python 3.12, PyTorch 2.8.0, CUDA 12.8, RTX A6000)
 
 ## Target baseline
 
 | Item | Value |
 |---|---|
-| OS | Ubuntu 22.04 LTS x86_64 |
-| Python | 3.12 (deadsnakes PPA if not installed) |
+| OS | Ubuntu 24.04 LTS x86_64 |
+| Python | 3.12 (Ubuntu 24.04 system Python) |
 | PyTorch | 2.8.0+cu128 (official PyTorch cu128 wheel index) |
 | CUDA Toolkit | 12.8 with `nvcc` (`/usr/local/cuda-12.8`) |
 | GPU | NVIDIA RTX A6000 (Ampere, compute capability 8.6, 48 GB) |
-| Compiler | system GCC 11 (supported by CUDA 12.8) |
+| Compiler | system GCC 13 (supported by CUDA 12.8) |
 
 The NVIDIA driver (>= 570 for CUDA 12.8) and the CUDA Toolkit 12.8 are prerequisites
 and are never installed by WTiVo. Check with `nvidia-smi` and `/usr/local/cuda-12.8/bin/nvcc --version`.
@@ -24,7 +24,7 @@ scripts/setup_ubuntu.sh
 
 The script (re-runnable):
 
-1. installs apt packages (Python 3.12, build tools, Eigen, oneTBB, Boost, GMP/MPFR);
+1. installs apt packages (Python 3.12 venv/dev, build tools, Eigen, oneTBB, Boost, GMP/MPFR);
 2. creates `.venv`, installs `torch==2.8.0` (cu128) and the pinned requirements;
 3. downloads header-only CGAL 6.0.1 and builds OpenVDB 11.0.0 into `.deps/`;
 4. builds `wtivo_core` and `wtivo_vdb` with CMake/Ninja into `build/`;

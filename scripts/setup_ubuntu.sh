@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-3.0-or-later
-# WTiVo setup for Ubuntu 22.04 x86_64 + Python 3.12 + PyTorch 2.8.0 (CUDA 12.8).
+# WTiVo setup for Ubuntu 24.04 LTS x86_64 + Python 3.12 + PyTorch 2.8.0 (CUDA 12.8).
 # Primary target GPU: NVIDIA RTX A6000 (Ampere, sm_86).
 #
 # Usage:  scripts/setup_ubuntu.sh [--skip-apt] [--cuda-arch 8.6]
@@ -31,8 +31,8 @@ fail() { echo "[WTiVo setup ERROR] $*" >&2; exit 1; }
 [[ "$(uname -m)" == "x86_64" ]] || fail "x86_64 required"
 if [[ -r /etc/os-release ]]; then
   . /etc/os-release
-  [[ "${ID:-}" == "ubuntu" && "${VERSION_ID:-}" == "22.04" ]] || \
-    info "WARNING: tested on Ubuntu 22.04; found ${PRETTY_NAME:-unknown}"
+  [[ "${ID:-}" == "ubuntu" && "${VERSION_ID:-}" == "24.04" ]] || \
+    info "WARNING: targeted at Ubuntu 24.04; found ${PRETTY_NAME:-unknown}"
 fi
 JOBS="${WTIVO_JOBS:-$(nproc)}"
 
@@ -41,12 +41,7 @@ if [[ $SKIP_APT -eq 0 ]]; then
   SUDO=""; [[ $EUID -ne 0 ]] && SUDO="sudo"
   info "Installing system packages (apt)..."
   $SUDO apt-get update
-  $SUDO apt-get install -y software-properties-common ca-certificates curl wget git xz-utils
-  if ! command -v python3.12 >/dev/null 2>&1; then
-    info "Adding deadsnakes PPA for Python 3.12..."
-    $SUDO add-apt-repository -y ppa:deadsnakes/ppa
-    $SUDO apt-get update
-  fi
+  $SUDO apt-get install -y ca-certificates curl wget git xz-utils
   $SUDO apt-get install -y python3.12 python3.12-venv python3.12-dev \
     build-essential pkg-config \
     libeigen3-dev libtbb-dev libboost-iostreams-dev libboost-system-dev \
@@ -62,7 +57,7 @@ if [[ -z "$CUDA_HOME_DIR" ]]; then
   done
 fi
 [[ -n "$CUDA_HOME_DIR" && -x "$CUDA_HOME_DIR/bin/nvcc" ]] || \
-  fail "CUDA Toolkit 12.8 (nvcc) not found. Install it from https://developer.nvidia.com/cuda-12-8-0-download-archive (Linux > x86_64 > Ubuntu > 22.04) or set WTIVO_CUDA_HOME."
+  fail "CUDA Toolkit 12.8 (nvcc) not found. Install it from https://developer.nvidia.com/cuda-12-8-0-download-archive (Linux > x86_64 > Ubuntu > 24.04) or set WTIVO_CUDA_HOME."
 NVCC_VER="$("$CUDA_HOME_DIR/bin/nvcc" --version | sed -n 's/.*release \([0-9.]*\),.*/\1/p')"
 info "CUDA toolkit: $CUDA_HOME_DIR (nvcc $NVCC_VER)"
 [[ "$NVCC_VER" == 12.8* ]] || info "WARNING: nvcc $NVCC_VER != 12.8; PyTorch cu128 builds expect 12.8 (CUDA 12.x minor mismatch is tolerated by torch)."
