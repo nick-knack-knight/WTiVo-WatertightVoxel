@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Forward-ported the v1.1 runner features to Linux for the ComfyUI node: `--proxy_points`, `--proxy_eps_scale`, native-array `.npy` bridge (`--input-vertices-npy` / `--input-faces-npy` / `--output-vertices-npy` / `--output-faces-npy`), input validation, and the secondary Trimesh closed/single-body audit in the `[FINAL]` line.
+- Relocatable builds: `libopenvdb.so*` is bundled into `build/` (`$ORIGIN` rpath), `build/BUILD_INFO.json` records the Python/torch/arch ABI, `scripts/package_build.sh` creates a tarball, and `WTIVO_BUILD_DIR` points `wtivo.py` / `verify_install.py` at externally supplied extensions.
+- `scripts/verify_install.py --e2e` runs the `.npy` bridge end to end on a GPU.
 - Ubuntu 24.04 / Python 3.12 / PyTorch 2.8.0+cu128 / RTX A6000 (sm_86) build: `scripts/setup_ubuntu.sh`, `run-wtivo.sh`, cross-platform CMake and `build_gpupr.py`, Linux memory/heap handling in `wtivo.py`.
 
 ## 1.0.0 — 2026-08-25

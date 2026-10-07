@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import os, sys
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[1]; BUILD=ROOT/'build'; VCPKG_BIN=ROOT/'.deps'/'vcpkg'/'installed'/'x64-windows'/'bin'
+ROOT=Path(__file__).resolve().parents[1]; BUILD=Path(os.environ.get('WTIVO_BUILD_DIR') or ROOT/'build').expanduser().resolve(); VCPKG_BIN=ROOT/'.deps'/'vcpkg'/'installed'/'x64-windows'/'bin'
 _handles=[]
 if os.name=='nt' and hasattr(os,'add_dll_directory'):
     candidates=[BUILD,VCPKG_BIN,Path(sys.executable).parent/'Lib'/'site-packages'/'torch'/'lib']
@@ -53,4 +53,31 @@ print('[PASS] wtivo_core watertight audit')
 print('[PASS] wtivo_vdb OpenVDB construction')
 print('[PASS] wtivo_gpupr exports')
 print('[PASS] NVIDIA CUDA visible')
+if '--e2e' in sys.argv:
+    # End-to-end smoke of the .npy bridge used by the ComfyUI node (needs the GPU).
+    import subprocess, tempfile
+    with tempfile.TemporaryDirectory(prefix='wtivo_verify_') as td:
+        td=Path(td)
+        # icosphere-ish closed mesh via a UV sphere
+        nu,nv=48,96
+        th=np.linspace(0,np.pi,nu); ph=np.linspace(0,2*np.pi,nv,endpoint=False)
+        V=[[0,0,1]]+[[np.sin(t)*np.cos(p),np.sin(t)*np.sin(p),np.cos(t)] for t in th[1:-1] for p in ph]+[[0,0,-1]]
+        F=[]
+        for j in range(nv): F.append([0,1+j,1+(j+1)%nv])
+        for i in range(nu-3):
+            for j in range(nv):
+                a=1+i*nv+j; b=1+i*nv+(j+1)%nv; c=a+nv; d=b+nv; F+= [[a,c,b],[b,c,d]]
+        last=len(V)-1
+        for j in range(nv): F.append([last,last-nv+(j+1)%nv,last-nv+j])
+        np.save(td/'vi.npy',np.asarray(V,dtype=np.float64)); np.save(td/'fi.npy',np.asarray(F,dtype=np.int32))
+        cmd=[sys.executable,str(ROOT/'wtivo.py'),'--input-vertices-npy',str(td/'vi.npy'),'--input-faces-npy',str(td/'fi.npy'),
+             '--output-vertices-npy',str(td/'vo.npy'),'--output-faces-npy',str(td/'fo.npy'),
+             '--input-res','128','--final-res','128','--proxy_points','200000','--threads','4']
+        r=subprocess.run(cmd,capture_output=True,text=True)
+        print(r.stdout[-1500:]); print(r.stderr[-1500:])
+        if r.returncode!=0 or not (td/'vo.npy').exists(): raise RuntimeError('npy bridge end-to-end run failed')
+        vo=np.load(td/'vo.npy'); fo=np.load(td/'fo.npy')
+        if vo.ndim!=2 or vo.shape[1]!=3 or fo.shape[1]!=3 or len(fo)==0: raise RuntimeError('npy bridge output malformed')
+        if 'watertight=True' not in r.stdout: raise RuntimeError('npy bridge output not watertight')
+        print(f'[PASS] npy bridge end-to-end ({len(vo):,} v / {len(fo):,} f)')
 print('WTiVo is ready.')

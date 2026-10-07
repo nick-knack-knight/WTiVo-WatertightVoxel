@@ -18,9 +18,12 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
+# WTIVO_BUILD_DIR lets prebuilt/copied extensions live outside the checkout
+# (e.g. a tarball from scripts/package_build.sh unpacked elsewhere).
+_EXT_DIR = Path(os.environ.get("WTIVO_BUILD_DIR") or (ROOT / "build")).expanduser().resolve()
 for _p in (
     ROOT,
-    ROOT / "build",
+    _EXT_DIR,
 ):
     if _p.exists() and str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
@@ -54,10 +57,34 @@ import wtivo_core as core
 import wtivo_gpupr as gpupr
 import wtivo_vdb as vdb
 
+
+def _check_build_info():
+    """Warn when the extensions were built for a different Python/torch than the one running."""
+    import json
+    f = _EXT_DIR / "BUILD_INFO.json"
+    if not f.exists():
+        return
+    try:
+        info = json.loads(f.read_text())
+    except Exception:
+        return
+    cur_py = f"{sys.version_info.major}.{sys.version_info.minor}"
+    cur_torch = torch.__version__.split("+")[0]
+    if info.get("python") != cur_py or info.get("torch") != cur_torch:
+        print(
+            f"[WTiVo][WARN] extensions built for python {info.get('python')} / torch {info.get('torch')} "
+            f"but running python {cur_py} / torch {cur_torch}; rebuild with scripts/setup_ubuntu.sh",
+            flush=True,
+        )
+
+
+_check_build_info()
+
 # Runtime-configurable resolutions. Defaults reproduce the tested WTiVo 1.0 benchmark.
 R = 1536
 FINAL_R = 1536
 PROXY_POINTS = 12_000_000
+PROXY_EPS_SCALE = 1.0
 
 EPS = 1.0 / R
 BAND = 3.0 / R
@@ -69,14 +96,21 @@ FINAL_EPS = 1.0 / FINAL_R
 FINAL_VOXEL_SIZE = 1.0 / (FINAL_R - 1)
 
 
-def configure_resolutions(input_res: int, final_res: int):
-    """Configure graph/thick and final FaithC resolutions before any work starts."""
-    global R, FINAL_R
+def configure_resolutions(
+    input_res: int,
+    final_res: int,
+    proxy_points: int = 12_000_000,
+    proxy_eps_scale: float = 1.0,
+):
+    """Configure the practical WTiVo quality/memory controls before any work starts."""
+    global R, FINAL_R, PROXY_POINTS, PROXY_EPS_SCALE
     global EPS, BAND, VOXEL_SIZE, VDB_BAND_VOXELS, LABEL_THRESHOLD
     global FINAL_EPS, FINAL_VOXEL_SIZE
 
     R = int(input_res)
     FINAL_R = int(final_res)
+    PROXY_POINTS = int(proxy_points)
+    PROXY_EPS_SCALE = float(proxy_eps_scale)
 
     # No artificial upper resolution cap.
     # OpenVDB/FaithC determine the practical memory/time limit at runtime.
@@ -84,8 +118,19 @@ def configure_resolutions(input_res: int, final_res: int):
         raise ValueError("--input-res must be >= 2")
     if FINAL_R < 2:
         raise ValueError("--final-res must be >= 2")
+    if PROXY_POINTS < 4:
+        raise ValueError("--proxy-points must be >= 4")
+    if PROXY_EPS_SCALE <= 0.0:
+        raise ValueError("--proxy-eps-scale must be > 0")
 
-    EPS = 1.0 / float(R)
+    EPS = PROXY_EPS_SCALE / float(R)
+    if EPS >= 0.5:
+        raise ValueError("--proxy-eps-scale is too large for --input-res")
+    if EPS <= 1.0e-4:
+        raise ValueError(
+            "--proxy-eps-scale/input-res must be greater than 1e-4 "
+            "so the graph label threshold stays positive"
+        )
     BAND = 3.0 / float(R)
     VOXEL_SIZE = 1.0 / float(R - 1)
     VDB_BAND_VOXELS = BAND / VOXEL_SIZE
@@ -103,8 +148,15 @@ def parse_args():
     p = argparse.ArgumentParser(
         description="WTiVo: WatertightVoxel Optimizer — sparse voxel proxy, tetra cell cut, CUDA graph optimization, and watertight FaithC-style finalization."
     )
-    p.add_argument("--input", required=True)
-    p.add_argument("--output", required=True)
+    p.add_argument("--input")
+    p.add_argument("--output")
+    # Native-array bridge used by the ComfyUI MESH -> MESH node. Raw .npy files
+    # avoid a very large temporary GLB/OBJ conversion and keep the WTiVo
+    # native environment isolated from ComfyUI's process.
+    p.add_argument("--input-vertices-npy", help=argparse.SUPPRESS)
+    p.add_argument("--input-faces-npy", help=argparse.SUPPRESS)
+    p.add_argument("--output-vertices-npy", help=argparse.SUPPRESS)
+    p.add_argument("--output-faces-npy", help=argparse.SUPPRESS)
     p.add_argument(
         "--input-res", "--graph-res", dest="input_res", type=int, default=1536,
         help="WTiVo thick/input UDF + graph-label resolution. Default 1536. No artificial upper limit.",
@@ -112,6 +164,14 @@ def parse_args():
     p.add_argument(
         "--final-res", dest="final_res", type=int, default=1536,
         help="Final signed OpenVDB + FaithC reconstruction resolution. Default 1536. No artificial upper limit.",
+    )
+    p.add_argument(
+        "--proxy_points", "--proxy-points", dest="proxy_points", type=int, default=12_000_000,
+        help="Number of FaithC/QEF proxy points sent to CGAL. Default 12,000,000.",
+    )
+    p.add_argument(
+        "--proxy_eps_scale", "--proxy-eps-scale", dest="proxy_eps_scale", type=float, default=1.0,
+        help="Graph/proxy EPS scale relative to input resolution. Default 1.0.",
     )
     p.add_argument(
         "--proxy_feature_weight", type=float, default=1.5,
@@ -331,17 +391,37 @@ def topology_to_cuda_chunked(host_array, tag: str):
     return out
 
 
-def load_mesh(path: Path):
-    mesh = trimesh.load_mesh(str(path), process=False)
-    if isinstance(mesh, trimesh.Scene):
-        mesh = mesh.dump(concatenate=True)
-    if not isinstance(mesh, trimesh.Trimesh):
-        raise RuntimeError(f"Could not load triangle mesh: {path}")
-    v = np.asarray(mesh.vertices, dtype=np.float64)
-    # Vertex count is far below INT32_MAX; keep face indices compact.
-    f = np.asarray(mesh.faces, dtype=np.int32)
+def load_mesh(path: Path = None, vertices_npy: Path = None, faces_npy: Path = None):
+    if vertices_npy is not None or faces_npy is not None:
+        if vertices_npy is None or faces_npy is None:
+            raise RuntimeError("Both input native-array paths are required")
+        v = np.load(str(vertices_npy), allow_pickle=False)
+        f = np.load(str(faces_npy), allow_pickle=False)
+        if v.ndim != 2 or v.shape[1] != 3:
+            raise RuntimeError(f"Native vertices must be Nx3, got {v.shape}")
+        if f.ndim != 2 or f.shape[1] != 3:
+            raise RuntimeError(f"Native faces must be Mx3 triangles, got {f.shape}")
+        v = np.ascontiguousarray(v, dtype=np.float64)
+        f = np.ascontiguousarray(f, dtype=np.int32)
+        source_name = "ComfyUI native MESH arrays"
+    else:
+        if path is None:
+            raise RuntimeError("No input mesh was provided")
+        mesh = trimesh.load_mesh(str(path), process=False)
+        if isinstance(mesh, trimesh.Scene):
+            mesh = mesh.dump(concatenate=True)
+        if not isinstance(mesh, trimesh.Trimesh):
+            raise RuntimeError(f"Could not load triangle mesh: {path}")
+        v = np.asarray(mesh.vertices, dtype=np.float64)
+        # Vertex count is far below INT32_MAX; keep face indices compact.
+        f = np.asarray(mesh.faces, dtype=np.int32)
+        source_name = str(path)
     if len(v) == 0 or len(f) == 0:
-        raise RuntimeError(f"Empty mesh: {path}")
+        raise RuntimeError(f"Empty mesh: {source_name}")
+    if not np.isfinite(v).all():
+        raise RuntimeError(f"Non-finite vertex coordinate in: {source_name}")
+    if int(f.min()) < 0 or int(f.max()) >= len(v):
+        raise RuntimeError(f"Face index outside vertex range in: {source_name}")
     return v, f
 
 
@@ -444,10 +524,11 @@ def direct_thick_points(
     input_path: Path, proxy_feature_weight: float,
     threads: int, thick_band_voxels: float,
     clamp_anchors: bool, lambda_n: float, lambda_d: float,
+    input_vertices_npy: Path = None, input_faces_npy: Path = None,
 ):
-    """Thick OpenVDB UDF -> direct FaithC/QEF anchors -> fixed point budget. NO proxy triangles."""
+    """Thick OpenVDB UDF -> direct FaithC/QEF anchors -> point budget. NO proxy triangles."""
     t_total = time.perf_counter()
-    v, f = load_mesh(input_path)
+    v, f = load_mesh(input_path, input_vertices_npy, input_faces_npy)
     print(f"[WTiVo-PointBudget] input v/f={len(v):,}/{len(f):,}", flush=True)
     bbox_min = v.min(0)
     bbox_max = v.max(0)
@@ -509,6 +590,31 @@ def direct_thick_points(
     )
     mem_snapshot("after direct point-budget proxy / no CUDA decimation")
     return vertices, bbox_min, bbox_max, sparse
+
+
+def trimesh_closed_audit(vertices: np.ndarray, faces: np.ndarray, tag: str):
+    """
+    Secondary audit using Trimesh.
+
+    Stricter than the native edge-degree check: usually catches vertex-non-manifold
+    and disconnected-shell cases that the edge-only native check can miss.
+    """
+    try:
+        m = trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
+        closed = bool(getattr(m, "is_watertight", False))
+        try:
+            bodies = int(getattr(m, "body_count", 1))
+        except Exception:
+            try:
+                bodies = len(m.split())
+            except Exception:
+                bodies = 1
+        ok = closed and bodies == 1
+        print(f"[{tag}] trimesh_closed={closed} | bodies={bodies} | use={ok}", flush=True)
+        return ok
+    except Exception as e:
+        print(f"[{tag}] trimesh audit failed: {e}", flush=True)
+        return False
 
 
 def native_watertight_count(faces: np.ndarray, threads: int, tag: str):
@@ -697,9 +803,25 @@ def gpupr_graph_cut_fast_v630(
 
 def main():
     a = parse_args()
+    native_input = bool(a.input_vertices_npy or a.input_faces_npy)
+    native_output = bool(a.output_vertices_npy or a.output_faces_npy)
+    if native_input:
+        if not (a.input_vertices_npy and a.input_faces_npy):
+            raise SystemExit("Native-array input requires both --input-vertices-npy and --input-faces-npy")
+        if a.input:
+            raise SystemExit("Use either --input or native-array input, not both")
+    elif not a.input:
+        raise SystemExit("--input is required for file mode")
+    if native_output:
+        if not (a.output_vertices_npy and a.output_faces_npy):
+            raise SystemExit("Native-array output requires both --output-vertices-npy and --output-faces-npy")
+        if a.output:
+            raise SystemExit("Use either --output or native-array output, not both")
+    elif not a.output:
+        raise SystemExit("--output is required for file mode")
     if not (1 <= int(a.gpupr_local_steps) <= 32):
         raise ValueError("--gpupr_local_steps must be between 1 and 32")
-    configure_resolutions(a.input_res, a.final_res)
+    configure_resolutions(a.input_res, a.final_res, a.proxy_points, a.proxy_eps_scale)
     if a.vdb_adaptivity != 0.0:
         print("[WARN] --vdb_adaptivity is ignored because VolumeToMesh is never called.", flush=True)
     if a.thin_band_voxels <= 1.8:
@@ -719,20 +841,42 @@ def main():
     if not torch.cuda.is_available():
         raise SystemExit("WTiVo requires an NVIDIA CUDA-capable GPU. Run Setup-Windows.cmd (Windows) or scripts/setup_ubuntu.sh (Linux) first.")
 
-    inp = Path(a.input).expanduser().resolve()
-    out = Path(a.output).expanduser().resolve()
-    if not inp.exists():
-        raise FileNotFoundError(inp)
-    out.parent.mkdir(parents=True, exist_ok=True)
+    inp = None
+    input_vertices_npy = input_faces_npy = None
+    if native_input:
+        input_vertices_npy = Path(a.input_vertices_npy).expanduser().resolve()
+        input_faces_npy = Path(a.input_faces_npy).expanduser().resolve()
+        for array_path in (input_vertices_npy, input_faces_npy):
+            if not array_path.exists():
+                raise FileNotFoundError(array_path)
+        input_display = "ComfyUI native MESH arrays"
+    else:
+        inp = Path(a.input).expanduser().resolve()
+        if not inp.exists():
+            raise FileNotFoundError(inp)
+        input_display = str(inp)
+
+    out = None
+    output_vertices_npy = output_faces_npy = None
+    if native_output:
+        output_vertices_npy = Path(a.output_vertices_npy).expanduser().resolve()
+        output_faces_npy = Path(a.output_faces_npy).expanduser().resolve()
+        output_vertices_npy.parent.mkdir(parents=True, exist_ok=True)
+        output_faces_npy.parent.mkdir(parents=True, exist_ok=True)
+        output_display = "ComfyUI native MESH arrays"
+    else:
+        out = Path(a.output).expanduser().resolve()
+        out.parent.mkdir(parents=True, exist_ok=True)
+        output_display = str(out)
 
     print("=======================================================")
-    print("  WTiVo 1.0 — WatertightVoxel Optimizer")
+    print("  WTiVo 1.1 — WatertightVoxel Optimizer")
     print("=======================================================")
-    print(f"Input          : {inp}")
-    print(f"Output         : {out}")
+    print(f"Input          : {input_display}")
+    print(f"Output         : {output_display}")
     print(f"Input/graph R  : {R} sparse global OpenVDB UDF")
     print(f"Final FaithC R : {FINAL_R} signed sparse OpenVDB")
-    print(f"Proxy budget   : {PROXY_POINTS:,} points [FIXED]")
+    print(f"Proxy budget   : {PROXY_POINTS:,} points")
     print(f"Feature weight : {a.proxy_feature_weight:g}")
     print(f"Lambda fill    : {a.lambda_fill}")
     print(f"CPU threads    : {a.threads}")
@@ -759,12 +903,12 @@ def main():
     print("[WTiVo] thick UDF freed immediately after labels")
     print("[WTiVo] Windows EmptyWorkingSet disabled; CRT heap compaction retained")
     print("[WTiVo] final watertight validation always ON exactly once")
-    print("[FIXED-12M] Exactly 12,000,000 points are sent to CGAL")
-    print("[NO-RATIO] --decimate_ratio and --proxy_points are intentionally unavailable in this production build")
-    print("[LABEL-FIX] geometry EPS=1/R; tet centroid OpenVDB query padding remains 0")
+    print(f"[PROXY-BUDGET] {PROXY_POINTS:,} points are sent to CGAL")
+    print("[NO-RATIO] --decimate_ratio remains intentionally unavailable")
+    print(f"[LABEL-FIX] geometry EPS={PROXY_EPS_SCALE:g}/R; tet centroid OpenVDB query padding remains 0")
     print(f"[RES-CONTROL] --input-res={R} controls thick field + cell-label geometry")
     print(f"[RES-CONTROL] --final-res={FINAL_R} controls ONLY final signed OpenVDB + FaithC density")
-    print("[FIXED-12M] CGAL proxy stays exactly 12,000,000 points regardless of resolution")
+    print(f"[PROXY-BUDGET] CGAL target={PROXY_POINTS:,} points regardless of resolution")
     print("[NO FINAL DECIMATOR] polygon count is the direct FaithC contour at --final-res")
     print("[NO RES CAP] --input-res and --final-res have NO artificial upper limit")
     print("[WARNING] practical limit is only RAM/VRAM/runtime; very high final-res can create enormous meshes")
@@ -784,6 +928,7 @@ def main():
         inp, a.proxy_feature_weight,
         a.threads, a.thick_band_voxels,
         bool(a.faithc_clamp_anchors), a.faithc_lambda_n, a.faithc_lambda_d,
+        input_vertices_npy, input_faces_npy,
     )
     mem_snapshot("after direct point proxy / sparse UDF retained for labels")
     gc.collect()
@@ -901,25 +1046,33 @@ def main():
 
     # The exact checker already ran once on the final face array inside
     # direct_thin_mesh_owned, after the v6.21 FaithC finalizer.
-    watertight = bool(final_wt_known)
     bad_edges = int(final_bad_known)
+    trimesh_ok = trimesh_closed_audit(final_v, final_f, "WTiVo-Audit-Trimesh")
+    watertight = bool(final_wt_known) and trimesh_ok
 
     print("-------------------------------------------------------")
     print("  WTiVo FINAL WATERTIGHT RESULT")
     print("-------------------------------------------------------")
     print(f"[FINAL] v/f={len(final_v):,}/{len(final_f):,}")
-    print(f"[FINAL] watertight={watertight} | bad_edge_groups={bad_edges}")
-    mem_snapshot("FINAL arrays only / before Trimesh export")
+    print(
+        f"[FINAL] watertight={watertight} | bad_edge_groups={bad_edges} | "
+        f"native_edge_watertight={bool(final_wt_known)} | trimesh_closed={trimesh_ok}"
+    )
+    mem_snapshot("FINAL arrays only / before output")
 
-    mesh = trimesh.Trimesh(vertices=final_v, faces=final_f, process=False)
-    mesh.export(str(out))
-    del mesh
+    if native_output:
+        np.save(str(output_vertices_npy), np.ascontiguousarray(final_v, dtype=np.float32), allow_pickle=False)
+        np.save(str(output_faces_npy), np.ascontiguousarray(final_f, dtype=np.int32), allow_pickle=False)
+    else:
+        mesh = trimesh.Trimesh(vertices=final_v, faces=final_f, process=False)
+        mesh.export(str(out))
+        del mesh
     gc.collect()
     compact_host_heap()
     mem_snapshot("after export")
 
     print(f"[DONE] total={(time.perf_counter()-t_all)/60.0:.2f} min")
-    print(f"[DONE] {out}")
+    print(f"[DONE] {output_display}")
     return 0
 
 

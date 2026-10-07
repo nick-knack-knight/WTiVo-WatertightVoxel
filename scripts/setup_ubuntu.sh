@@ -113,9 +113,12 @@ PYBIND_DIR="$("$PY" -m pybind11 --cmakedir)"
 "$CMAKE" -S "$ROOT" -B .build/native -G Ninja -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_MAKE_PROGRAM="$NINJA" -DPython3_EXECUTABLE="$PY" -Dpybind11_DIR="$PYBIND_DIR" \
   -DCGAL_DIR="$CGAL_DIR/lib/cmake/CGAL" -DCMAKE_MODULE_PATH="$VDB_PREFIX/lib/cmake/OpenVDB" -DOpenVDB_ROOT="$VDB_PREFIX" \
-  -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON -DCMAKE_INSTALL_RPATH="$VDB_PREFIX/lib" \
+  -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON -DCMAKE_INSTALL_RPATH="\$ORIGIN;$VDB_PREFIX/lib" \
   -DWTIVO_OUTPUT_DIR="$ROOT/build"
 "$CMAKE" --build .build/native -j "$JOBS"
+
+# ---- bundle libopenvdb next to the extensions ($ORIGIN rpath) so build/ is relocatable
+cp -a "$VDB_PREFIX"/lib/libopenvdb.so* build/
 
 # ---- CUDA extension (wtivo_gpupr) ------------------------------------------
 info "Building wtivo_gpupr for sm_${ARCH/./}..."
@@ -127,6 +130,9 @@ cat > .wtivo-env.sh <<ENVEOF
 export WTIVO_CUDA_HOME="$CUDA_HOME_DIR"
 export LD_LIBRARY_PATH="$VDB_PREFIX/lib:$CUDA_HOME_DIR/lib64\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}"
 ENVEOF
+
+# ---- relocatable build manifest (checked by wtivo.py / verify_install.py) ----
+"$PY" scripts/write_build_info.py --arch "$ARCH"
 
 info "Verifying install..."
 # shellcheck disable=SC1091

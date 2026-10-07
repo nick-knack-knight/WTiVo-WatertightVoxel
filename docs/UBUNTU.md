@@ -39,6 +39,22 @@ Options: `--skip-apt`, `--cuda-arch 8.6` (or `WTIVO_CUDA_ARCH`), `WTIVO_CUDA_HOM
 ./run-wtivo.sh --input model.glb --output model_watertight.glb --input-res 1536 --final-res 1536 --lambda_fill 10
 ```
 
+## Building once, copying elsewhere
+
+`setup_ubuntu.sh` bundles `libopenvdb.so*` into `build/` and writes `build/BUILD_INFO.json`.
+To reuse the compiled extensions on another machine (or in the ComfyUI node's `backend/build`):
+
+```bash
+scripts/package_build.sh                      # -> wtivo-build-linux.tar.gz
+tar -xzf wtivo-build-linux.tar.gz -C /path/to/other/build   # or any directory
+export WTIVO_BUILD_DIR=/path/to/other/build   # optional: build dir outside the checkout
+.venv/bin/python scripts/verify_install.py --e2e
+```
+
+The target must match `BUILD_INFO.json` (Python 3.12, same torch 2.8.x, same GPU architecture, e.g. sm_86) and have
+the apt runtime libs (`libtbb12 libgmp10 libmpfr6 libboost-iostreams`). `wtivo.py` prints a warning when the
+manifest does not match the running Python/torch.
+
 ## Notes
 
 * Windows-specific code paths (DLL directories, CRT heap compaction, Win32 memory
