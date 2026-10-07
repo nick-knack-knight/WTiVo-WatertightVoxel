@@ -93,7 +93,7 @@ fi
 
 # ---- OpenVDB ---------------------------------------------------------------
 VDB_PREFIX="$ROOT/.deps/openvdb"
-if [[ ! -f "$VDB_PREFIX/lib/cmake/OpenVDB/OpenVDBConfig.cmake" ]]; then
+if [[ ! -f "$VDB_PREFIX/lib/libopenvdb.so" ]]; then
   info "Building OpenVDB $OPENVDB_VERSION (several minutes)..."
   rm -rf .deps/openvdb-src
   git clone --depth 1 --branch "v$OPENVDB_VERSION" https://github.com/AcademySoftwareFoundation/openvdb.git .deps/openvdb-src
@@ -112,7 +112,7 @@ info "Configuring wtivo_core + wtivo_vdb..."
 PYBIND_DIR="$("$PY" -m pybind11 --cmakedir)"
 "$CMAKE" -S "$ROOT" -B .build/native -G Ninja -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_MAKE_PROGRAM="$NINJA" -DPython3_EXECUTABLE="$PY" -Dpybind11_DIR="$PYBIND_DIR" \
-  -DCGAL_DIR="$CGAL_DIR/lib/cmake/CGAL" -DOpenVDB_DIR="$VDB_PREFIX/lib/cmake/OpenVDB" \
+  -DCGAL_DIR="$CGAL_DIR/lib/cmake/CGAL" -DCMAKE_MODULE_PATH="$VDB_PREFIX/lib/cmake/OpenVDB" -DOpenVDB_ROOT="$VDB_PREFIX" \
   -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON -DCMAKE_INSTALL_RPATH="$VDB_PREFIX/lib" \
   -DWTIVO_OUTPUT_DIR="$ROOT/build"
 "$CMAKE" --build .build/native -j "$JOBS"
